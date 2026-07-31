@@ -106,7 +106,37 @@ uint8_t read6502(uint16_t address) {
     return 0;
 
 #elif defined(BOARD_SYM1)
-    #warning "BOARD_SYM1: mapa de memoria pendiente de implementar (falta el dump de SUPERMON)"
+    // ---- SYM-1 (Supermon 1.1) ---------------------------------------------
+    // GETCH vectorizado: char en A, A=0 si no hay nada (sondeo no bloqueante
+    // en el hardware real; aqui simplemente esperamos a que llegue el byte).
+    if (address == SYM1_ADDR_GETCH) {
+        extern uint8_t a; extern uint16_t pc;
+        while (Serial.available() == 0) { /* esperar byte */ }
+        a = Serial.read();
+        pc = SYM1_ADDR_GETCH_RET;
+        return (0xEA);
+    }
+    // OUTCH vectorizado: caracter a imprimir ya esta en A
+    if (address == SYM1_ADDR_OUTCH) {
+        extern uint8_t a; extern uint16_t pc;
+        Serial.print((char)a);
+        pc = SYM1_ADDR_OUTCH_RET;
+        return (0xEA);
+    }
+
+    if (address >= MONITOR_ROM_BASE && address <= (MONITOR_ROM_BASE + MONITOR_ROM_SIZE - 1))
+        return pgm_read_byte_near(MONITOR_ROM + (address - MONITOR_ROM_BASE));
+
+#if defined(BASIC_ROM_BASE)
+    if (address >= BASIC_ROM_BASE && address <= (BASIC_ROM_BASE + BASIC_ROM_SIZE - 1))
+        return pgm_read_byte_near(BASIC_ROM + (address - BASIC_ROM_BASE));
+#endif
+
+    if (address >= SYM1_SYSRAM_BASE && address <= (SYM1_SYSRAM_BASE + SYM1_SYSRAM_SIZE - 1))
+        return RIOT[address - SYM1_SYSRAM_BASE];   // reutilizamos el array RIOT[] como RAM de sistema
+
+    if (address < RAM_SIZE) return RAM[address];
+
     return 0;
 
 #elif defined(BOARD_AIM65)
@@ -139,7 +169,12 @@ void write6502(uint16_t address, uint8_t value) {
     return;
 
 #elif defined(BOARD_SYM1)
-    return; // TODO
+    if (address >= SYM1_SYSRAM_BASE && address <= (SYM1_SYSRAM_BASE + SYM1_SYSRAM_SIZE - 1)) {
+        RIOT[address - SYM1_SYSRAM_BASE] = value;
+        return;
+    }
+    if (address < RAM_SIZE) { RAM[address] = value; return; }
+    return;
 
 #elif defined(BOARD_AIM65)
     return; // TODO

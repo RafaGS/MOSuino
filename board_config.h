@@ -20,7 +20,7 @@
 
  ==============================================
 \**********************************************/
-
+#define BOARD_SYM1
 // Si NINGUNO de los defines de placa llega ya puesto por arduino-cli
 // (-DBOARD_XXX), se usa KIM-1 como placa por defecto.
 #if !defined(BOARD_KIM1)  && !defined(BOARD_SYM1)    && \
