@@ -1,0 +1,916 @@
+#pragma once
+/**********************************************\
+ ==============================================
+
+          fake6502 CPU by Mike Chambers
+     (nucleo generico, independiente de placa)
+
+ ==============================================
+\**********************************************/
+#include <stdint.h>
+#include <avr/pgmspace.h>
+
+//6502 defines
+#define UNDOCUMENTED //when this is defined, undocumented opcodes are handled.
+                     //otherwise, they're simply treated as NOPs.
+
+#define FLAG_CARRY     0x01
+#define FLAG_ZERO      0x02
+#define FLAG_INTERRUPT 0x04
+#define FLAG_DECIMAL   0x08
+#define FLAG_BREAK     0x10
+#define FLAG_CONSTANT  0x20
+#define FLAG_OVERFLOW  0x40
+#define FLAG_SIGN      0x80
+#define BASE_STACK     0x100
+#define saveaccum(n) a = (uint8_t)((n) & 0x00FF)
+
+//flag modifier macros
+#define setcarry() status |= FLAG_CARRY
+#define clearcarry() status &= (~FLAG_CARRY)
+#define setzero() status |= FLAG_ZERO
+#define clearzero() status &= (~FLAG_ZERO)
+#define setinterrupt() status |= FLAG_INTERRUPT
+#define clearinterrupt() status &= (~FLAG_INTERRUPT)
+#define setdecimal() status |= FLAG_DECIMAL
+#define cleardecimal() status &= (~FLAG_DECIMAL)
+#define setoverflow() status |= FLAG_OVERFLOW
+#define clearoverflow() status &= (~FLAG_OVERFLOW)
+#define setsign() status |= FLAG_SIGN
+#define clearsign() status &= (~FLAG_SIGN)
+
+//flag calculation macros
+#define zerocalc(n) {\
+    if ((n) & 0x00FF) clearzero();\
+        else setzero();\
+}
+
+#define signcalc(n) {\
+    if ((n) & 0x0080) setsign();\
+        else clearsign();\
+}
+
+#define carrycalc(n) {\
+    if ((n) & 0xFF00) setcarry();\
+        else clearcarry();\
+}
+
+#define overflowcalc(n, m, o) { /* n = result, m = accumulator, o = memory */ \
+    if (((n) ^ (uint16_t)(m)) & ((n) ^ (o)) & 0x0080) setoverflow();\
+        else clearoverflow();\
+}
+
+//6502 CPU registers
+uint16_t pc;
+uint8_t sp, a, x, y, status;
+
+//helper variables
+uint32_t instructions = 0; //keep track of total instructions executed
+uint32_t clockticks6502 = 0, clockgoal6502 = 0;
+uint16_t oldpc, ea, reladdr, value, result;
+uint8_t opcode, oldstatus;
+
+//externally supplied functions
+extern uint8_t read6502(uint16_t address);
+extern void write6502(uint16_t address, uint8_t value);
+
+// Prototipos (arduino-cli/el IDE los genera automaticamente; aqui los
+// declaramos a mano para poder compilar tambien fuera del IDE)
+static void imp();
+static void acc();
+static void imm();
+static void zp();
+static void zpx();
+static void zpy();
+static void rel();
+static void abso();
+static void absx();
+static void absy();
+static void ind();
+static void indx();
+static void indy();
+static void adc();
+static void _and();
+static void asl();
+static void bcc();
+static void bcs();
+static void beq();
+static void _bit();
+static void bmi();
+static void bne();
+static void bpl();
+static void brk();
+static void bvc();
+static void bvs();
+static void clc();
+static void cld();
+static void _cli();
+static void clv();
+static void cmp();
+static void cpx();
+static void cpy();
+static void dec();
+static void dex();
+static void dey();
+static void eor();
+static void inc();
+static void inx();
+static void iny();
+static void jmp();
+static void jsr();
+static void lda();
+static void ldx();
+static void ldy();
+static void lsr();
+static void nop();
+static void ora();
+static void pha();
+static void php();
+static void pla();
+static void plp();
+static void rol();
+static void ror();
+static void rti();
+static void rts();
+static void sbc();
+static void sec();
+static void sed();
+static void _sei();
+static void sta();
+static void stx();
+static void sty();
+static void tax();
+static void tay();
+static void tsx();
+static void txa();
+static void txs();
+static void tya();
+static uint16_t getvalue();
+static uint16_t getvalue16();
+static void putvalue(uint16_t saveval);
+#ifdef UNDOCUMENTED
+static void lax();
+static void sax();
+static void dcp();
+static void isb();
+static void slo();
+static void rla();
+static void sre();
+static void rra();
+#endif
+
+
+//a few general functions used by various other functions
+void push16(uint16_t pushval) {
+    write6502(BASE_STACK + sp, (pushval >> 8) & 0xFF);
+    write6502(BASE_STACK + ((sp - 1) & 0xFF), pushval & 0xFF);
+    sp -= 2;
+}
+
+void push8(uint8_t pushval) {
+    write6502(BASE_STACK + sp--, pushval);
+}
+
+uint16_t pull16() {
+    uint16_t temp16;
+    temp16 = read6502(BASE_STACK + ((sp + 1) & 0xFF)) | ((uint16_t)read6502(BASE_STACK + ((sp + 2) & 0xFF)) << 8);
+    sp += 2;
+    return(temp16);
+}
+
+uint8_t pull8() {
+    return (read6502(BASE_STACK + ++sp));
+}
+
+void reset6502() {
+    pc = (uint16_t)read6502(0xFFFC) | ((uint16_t)read6502(0xFFFD) << 8);
+    a = 0;
+    x = 0;
+    y = 0;
+    sp = 0xFD;
+    status |= FLAG_CONSTANT;
+}
+
+const uintptr_t addrtable[256] PROGMEM = {
+/*        |  0  |  1  |  2  |  3  |  4  |  5  |  6  |  7  |  8  |  9  |  A  |  B  |  C  |  D  |  E  |  F  |     */
+/* 0 */     (uintptr_t)&imp, (uintptr_t)&indx,  (uintptr_t)&imp, (uintptr_t)&indx,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,  (uintptr_t)&imp,  (uintptr_t)&imm,  (uintptr_t)&acc,  (uintptr_t)&imm, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, /* 0 */
+/* 1 */     (uintptr_t)&rel, (uintptr_t)&indy,  (uintptr_t)&imp, (uintptr_t)&indy,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&imp, (uintptr_t)&absy,  (uintptr_t)&imp, (uintptr_t)&absy, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx, /* 1 */
+/* 2 */    (uintptr_t)&abso, (uintptr_t)&indx,  (uintptr_t)&imp, (uintptr_t)&indx,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,  (uintptr_t)&imp,  (uintptr_t)&imm,  (uintptr_t)&acc,  (uintptr_t)&imm, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, /* 2 */
+/* 3 */     (uintptr_t)&rel, (uintptr_t)&indy,  (uintptr_t)&imp, (uintptr_t)&indy,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&imp, (uintptr_t)&absy,  (uintptr_t)&imp, (uintptr_t)&absy, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx, /* 3 */
+/* 4 */     (uintptr_t)&imp, (uintptr_t)&indx,  (uintptr_t)&imp, (uintptr_t)&indx,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,  (uintptr_t)&imp,  (uintptr_t)&imm,  (uintptr_t)&acc,  (uintptr_t)&imm, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, /* 4 */
+/* 5 */     (uintptr_t)&rel, (uintptr_t)&indy,  (uintptr_t)&imp, (uintptr_t)&indy,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&imp, (uintptr_t)&absy,  (uintptr_t)&imp, (uintptr_t)&absy, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx, /* 5 */
+/* 6 */     (uintptr_t)&imp, (uintptr_t)&indx,  (uintptr_t)&imp, (uintptr_t)&indx,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,  (uintptr_t)&imp,  (uintptr_t)&imm,  (uintptr_t)&acc,  (uintptr_t)&imm,  (uintptr_t)&ind, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, /* 6 */
+/* 7 */     (uintptr_t)&rel, (uintptr_t)&indy,  (uintptr_t)&imp, (uintptr_t)&indy,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&imp, (uintptr_t)&absy,  (uintptr_t)&imp, (uintptr_t)&absy, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx, /* 7 */
+/* 8 */     (uintptr_t)&imm, (uintptr_t)&indx,  (uintptr_t)&imm, (uintptr_t)&indx,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,  (uintptr_t)&imp,  (uintptr_t)&imm,  (uintptr_t)&imp,  (uintptr_t)&imm, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, /* 8 */
+/* 9 */     (uintptr_t)&rel, (uintptr_t)&indy,  (uintptr_t)&imp, (uintptr_t)&indy,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpy,  (uintptr_t)&zpy,  (uintptr_t)&imp, (uintptr_t)&absy,  (uintptr_t)&imp, (uintptr_t)&absy, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absy, (uintptr_t)&absy, /* 9 */
+/* A */     (uintptr_t)&imm, (uintptr_t)&indx,  (uintptr_t)&imm, (uintptr_t)&indx,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,  (uintptr_t)&imp,  (uintptr_t)&imm,  (uintptr_t)&imp,  (uintptr_t)&imm, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, /* A */
+/* B */     (uintptr_t)&rel, (uintptr_t)&indy,  (uintptr_t)&imp, (uintptr_t)&indy,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpy,  (uintptr_t)&zpy,  (uintptr_t)&imp, (uintptr_t)&absy,  (uintptr_t)&imp, (uintptr_t)&absy, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absy, (uintptr_t)&absy, /* B */
+/* C */     (uintptr_t)&imm, (uintptr_t)&indx,  (uintptr_t)&imm, (uintptr_t)&indx,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,  (uintptr_t)&imp,  (uintptr_t)&imm,  (uintptr_t)&imp,  (uintptr_t)&imm, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, /* C */
+/* D */     (uintptr_t)&rel, (uintptr_t)&indy,  (uintptr_t)&imp, (uintptr_t)&indy,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&imp, (uintptr_t)&absy,  (uintptr_t)&imp, (uintptr_t)&absy, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx, /* D */
+/* E */     (uintptr_t)&imm, (uintptr_t)&indx,  (uintptr_t)&imm, (uintptr_t)&indx,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,   (uintptr_t)&zp,  (uintptr_t)&imp,  (uintptr_t)&imm,  (uintptr_t)&imp,  (uintptr_t)&imm, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, (uintptr_t)&abso, /* E */
+/* F */     (uintptr_t)&rel, (uintptr_t)&indy,  (uintptr_t)&imp, (uintptr_t)&indy,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&zpx,  (uintptr_t)&imp, (uintptr_t)&absy,  (uintptr_t)&imp, (uintptr_t)&absy, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx, (uintptr_t)&absx  /* F */
+
+};
+
+const uintptr_t optable[256] PROGMEM = {
+/*        |  0  |  1  |  2  |  3  |  4  |  5  |  6  |  7  |  8  |  9  |  A  |  B  |  C  |  D  |  E  |  F  |      */
+/* 0 */      (uintptr_t)&brk,  (uintptr_t)&ora,  (uintptr_t)&nop,  (uintptr_t)&slo,  (uintptr_t)&nop,  (uintptr_t)&ora,  (uintptr_t)&asl,  (uintptr_t)&slo,  (uintptr_t)&php,  (uintptr_t)&ora,  (uintptr_t)&asl,  (uintptr_t)&nop,  (uintptr_t)&nop,  (uintptr_t)&ora,  (uintptr_t)&asl,  (uintptr_t)&slo, /* 0 */
+/* 1 */      (uintptr_t)&bpl,  (uintptr_t)&ora,  (uintptr_t)&nop,  (uintptr_t)&slo,  (uintptr_t)&nop,  (uintptr_t)&ora,  (uintptr_t)&asl,  (uintptr_t)&slo,  (uintptr_t)&clc,  (uintptr_t)&ora,  (uintptr_t)&nop,  (uintptr_t)&slo,  (uintptr_t)&nop,  (uintptr_t)&ora,  (uintptr_t)&asl,  (uintptr_t)&slo, /* 1 */
+/* 2 */      (uintptr_t)&jsr,  (uintptr_t)&_and,  (uintptr_t)&nop,  (uintptr_t)&rla,  (uintptr_t)&_bit,  (uintptr_t)&_and,  (uintptr_t)&rol,  (uintptr_t)&rla,  (uintptr_t)&plp,  (uintptr_t)&_and,  (uintptr_t)&rol,  (uintptr_t)&nop,  (uintptr_t)&_bit,  (uintptr_t)&_and,  (uintptr_t)&rol,  (uintptr_t)&rla, /* 2 */
+/* 3 */      (uintptr_t)&bmi,  (uintptr_t)&_and,  (uintptr_t)&nop,  (uintptr_t)&rla,  (uintptr_t)&nop,  (uintptr_t)&_and,  (uintptr_t)&rol,  (uintptr_t)&rla,  (uintptr_t)&sec,  (uintptr_t)&_and,  (uintptr_t)&nop,  (uintptr_t)&rla,  (uintptr_t)&nop,  (uintptr_t)&_and,  (uintptr_t)&rol,  (uintptr_t)&rla, /* 3 */
+/* 4 */      (uintptr_t)&rti,  (uintptr_t)&eor,  (uintptr_t)&nop,  (uintptr_t)&sre,  (uintptr_t)&nop,  (uintptr_t)&eor,  (uintptr_t)&lsr,  (uintptr_t)&sre,  (uintptr_t)&pha,  (uintptr_t)&eor,  (uintptr_t)&lsr,  (uintptr_t)&nop,  (uintptr_t)&jmp,  (uintptr_t)&eor,  (uintptr_t)&lsr,  (uintptr_t)&sre, /* 4 */
+/* 5 */      (uintptr_t)&bvc,  (uintptr_t)&eor,  (uintptr_t)&nop,  (uintptr_t)&sre,  (uintptr_t)&nop,  (uintptr_t)&eor,  (uintptr_t)&lsr,  (uintptr_t)&sre,  (uintptr_t)&_cli,  (uintptr_t)&eor,  (uintptr_t)&nop,  (uintptr_t)&sre,  (uintptr_t)&nop,  (uintptr_t)&eor,  (uintptr_t)&lsr,  (uintptr_t)&sre, /* 5 */
+/* 6 */      (uintptr_t)&rts,  (uintptr_t)&adc,  (uintptr_t)&nop,  (uintptr_t)&rra,  (uintptr_t)&nop,  (uintptr_t)&adc,  (uintptr_t)&ror,  (uintptr_t)&rra,  (uintptr_t)&pla,  (uintptr_t)&adc,  (uintptr_t)&ror,  (uintptr_t)&nop,  (uintptr_t)&jmp,  (uintptr_t)&adc,  (uintptr_t)&ror,  (uintptr_t)&rra, /* 6 */
+/* 7 */      (uintptr_t)&bvs,  (uintptr_t)&adc,  (uintptr_t)&nop,  (uintptr_t)&rra,  (uintptr_t)&nop,  (uintptr_t)&adc,  (uintptr_t)&ror,  (uintptr_t)&rra,  (uintptr_t)&_sei,  (uintptr_t)&adc,  (uintptr_t)&nop,  (uintptr_t)&rra,  (uintptr_t)&nop,  (uintptr_t)&adc,  (uintptr_t)&ror,  (uintptr_t)&rra, /* 7 */
+/* 8 */      (uintptr_t)&nop,  (uintptr_t)&sta,  (uintptr_t)&nop,  (uintptr_t)&sax,  (uintptr_t)&sty,  (uintptr_t)&sta,  (uintptr_t)&stx,  (uintptr_t)&sax,  (uintptr_t)&dey,  (uintptr_t)&nop,  (uintptr_t)&txa,  (uintptr_t)&nop,  (uintptr_t)&sty,  (uintptr_t)&sta,  (uintptr_t)&stx,  (uintptr_t)&sax, /* 8 */
+/* 9 */      (uintptr_t)&bcc,  (uintptr_t)&sta,  (uintptr_t)&nop,  (uintptr_t)&nop,  (uintptr_t)&sty,  (uintptr_t)&sta,  (uintptr_t)&stx,  (uintptr_t)&sax,  (uintptr_t)&tya,  (uintptr_t)&sta,  (uintptr_t)&txs,  (uintptr_t)&nop,  (uintptr_t)&nop,  (uintptr_t)&sta,  (uintptr_t)&nop,  (uintptr_t)&nop, /* 9 */
+/* A */      (uintptr_t)&ldy,  (uintptr_t)&lda,  (uintptr_t)&ldx,  (uintptr_t)&lax,  (uintptr_t)&ldy,  (uintptr_t)&lda,  (uintptr_t)&ldx,  (uintptr_t)&lax,  (uintptr_t)&tay,  (uintptr_t)&lda,  (uintptr_t)&tax,  (uintptr_t)&nop,  (uintptr_t)&ldy,  (uintptr_t)&lda,  (uintptr_t)&ldx,  (uintptr_t)&lax, /* A */
+/* B */      (uintptr_t)&bcs,  (uintptr_t)&lda,  (uintptr_t)&nop,  (uintptr_t)&lax,  (uintptr_t)&ldy,  (uintptr_t)&lda,  (uintptr_t)&ldx,  (uintptr_t)&lax,  (uintptr_t)&clv,  (uintptr_t)&lda,  (uintptr_t)&tsx,  (uintptr_t)&lax,  (uintptr_t)&ldy,  (uintptr_t)&lda,  (uintptr_t)&ldx,  (uintptr_t)&lax, /* B */
+/* C */      (uintptr_t)&cpy,  (uintptr_t)&cmp,  (uintptr_t)&nop,  (uintptr_t)&dcp,  (uintptr_t)&cpy,  (uintptr_t)&cmp,  (uintptr_t)&dec,  (uintptr_t)&dcp,  (uintptr_t)&iny,  (uintptr_t)&cmp,  (uintptr_t)&dex,  (uintptr_t)&nop,  (uintptr_t)&cpy,  (uintptr_t)&cmp,  (uintptr_t)&dec,  (uintptr_t)&dcp, /* C */
+/* D */      (uintptr_t)&bne,  (uintptr_t)&cmp,  (uintptr_t)&nop,  (uintptr_t)&dcp,  (uintptr_t)&nop,  (uintptr_t)&cmp,  (uintptr_t)&dec,  (uintptr_t)&dcp,  (uintptr_t)&cld,  (uintptr_t)&cmp,  (uintptr_t)&nop,  (uintptr_t)&dcp,  (uintptr_t)&nop,  (uintptr_t)&cmp,  (uintptr_t)&dec,  (uintptr_t)&dcp, /* D */
+/* E */      (uintptr_t)&cpx,  (uintptr_t)&sbc,  (uintptr_t)&nop,  (uintptr_t)&isb,  (uintptr_t)&cpx,  (uintptr_t)&sbc,  (uintptr_t)&inc,  (uintptr_t)&isb,  (uintptr_t)&inx,  (uintptr_t)&sbc,  (uintptr_t)&nop,  (uintptr_t)&sbc,  (uintptr_t)&cpx,  (uintptr_t)&sbc,  (uintptr_t)&inc,  (uintptr_t)&isb, /* E */
+/* F */      (uintptr_t)&beq,  (uintptr_t)&sbc,  (uintptr_t)&nop,  (uintptr_t)&isb,  (uintptr_t)&nop,  (uintptr_t)&sbc,  (uintptr_t)&inc,  (uintptr_t)&isb,  (uintptr_t)&sed,  (uintptr_t)&sbc,  (uintptr_t)&nop,  (uintptr_t)&isb,  (uintptr_t)&nop,  (uintptr_t)&sbc,  (uintptr_t)&inc,  (uintptr_t)&isb  /* F */
+};
+
+static const uint8_t ticktable[256] PROGMEM = {
+/*        |  0  |  1  |  2  |  3  |  4  |  5  |  6  |  7  |  8  |  9  |  A  |  B  |  C  |  D  |  E  |  F  |     */
+/* 0 */      7,    6,    2,    8,    3,    3,    5,    5,    3,    2,    2,    2,    4,    4,    6,    6,  /* 0 */
+/* 1 */      2,    5,    2,    8,    4,    4,    6,    6,    2,    4,    2,    7,    4,    4,    7,    7,  /* 1 */
+/* 2 */      6,    6,    2,    8,    3,    3,    5,    5,    4,    2,    2,    2,    4,    4,    6,    6,  /* 2 */
+/* 3 */      2,    5,    2,    8,    4,    4,    6,    6,    2,    4,    2,    7,    4,    4,    7,    7,  /* 3 */
+/* 4 */      6,    6,    2,    8,    3,    3,    5,    5,    3,    2,    2,    2,    3,    4,    6,    6,  /* 4 */
+/* 5 */      2,    5,    2,    8,    4,    4,    6,    6,    2,    4,    2,    7,    4,    4,    7,    7,  /* 5 */
+/* 6 */      6,    6,    2,    8,    3,    3,    5,    5,    4,    2,    2,    2,    5,    4,    6,    6,  /* 6 */
+/* 7 */      2,    5,    2,    8,    4,    4,    6,    6,    2,    4,    2,    7,    4,    4,    7,    7,  /* 7 */
+/* 8 */      2,    6,    2,    6,    3,    3,    3,    3,    2,    2,    2,    2,    4,    4,    4,    4,  /* 8 */
+/* 9 */      2,    6,    2,    6,    4,    4,    4,    4,    2,    5,    2,    5,    5,    5,    5,    5,  /* 9 */
+/* A */      2,    6,    2,    6,    3,    3,    3,    3,    2,    2,    2,    2,    4,    4,    4,    4,  /* A */
+/* B */      2,    5,    2,    5,    4,    4,    4,    4,    2,    4,    2,    4,    4,    4,    4,    4,  /* B */
+/* C */      2,    6,    2,    8,    3,    3,    5,    5,    2,    2,    2,    2,    4,    4,    6,    6,  /* C */
+/* D */      2,    5,    2,    8,    4,    4,    6,    6,    2,    4,    2,    7,    4,    4,    7,    7,  /* D */
+/* E */      2,    6,    2,    8,    3,    3,    5,    5,    2,    2,    2,    2,    4,    4,    6,    6,  /* E */
+/* F */      2,    5,    2,    8,    4,    4,    6,    6,    2,    4,    2,    7,    4,    4,    7,    7   /* F */
+};
+
+uint8_t penaltyop, penaltyaddr;
+
+//addressing mode functions, calculates effective addresses
+static void imp() { //implied
+}
+
+static void acc() { //accumulator
+}
+
+static void imm() { //immediate
+    ea = pc++;
+}
+
+static void zp() { //zero-page
+    ea = (uint16_t)read6502((uint16_t)pc++);
+}
+
+static void zpx() { //zero-page,X
+    ea = ((uint16_t)read6502((uint16_t)pc++) + (uint16_t)x) & 0xFF; //zero-page wraparound
+}
+
+static void zpy() { //zero-page,Y
+    ea = ((uint16_t)read6502((uint16_t)pc++) + (uint16_t)y) & 0xFF; //zero-page wraparound
+}
+
+static void rel() { //relative for branch ops (8-bit immediate value, sign-extended)
+    reladdr = (uint16_t)read6502(pc++);
+    if (reladdr & 0x80) reladdr |= 0xFF00;
+}
+
+static void abso() { //absolute
+    ea = (uint16_t)read6502(pc) | ((uint16_t)read6502(pc+1) << 8);
+    pc += 2;
+}
+
+static void absx() { //absolute,X
+    uint16_t startpage;
+    ea = ((uint16_t)read6502(pc) | ((uint16_t)read6502(pc+1) << 8));
+    startpage = ea & 0xFF00;
+    ea += (uint16_t)x;
+
+    if (startpage != (ea & 0xFF00)) { //one cycle penlty for page-crossing on some opcodes
+        penaltyaddr = 1;
+    }
+
+    pc += 2;
+}
+
+static void absy() { //absolute,Y
+    uint16_t startpage;
+    ea = ((uint16_t)read6502(pc) | ((uint16_t)read6502(pc+1) << 8));
+    startpage = ea & 0xFF00;
+    ea += (uint16_t)y;
+
+    if (startpage != (ea & 0xFF00)) { //one cycle penlty for page-crossing on some opcodes
+        penaltyaddr = 1;
+    }
+
+    pc += 2;
+}
+
+static void ind() { //indirect
+    uint16_t eahelp, eahelp2;
+    eahelp = (uint16_t)read6502(pc) | (uint16_t)((uint16_t)read6502(pc+1) << 8);
+    eahelp2 = (eahelp & 0xFF00) | ((eahelp + 1) & 0x00FF); //replicate 6502 page-boundary wraparound bug
+    ea = (uint16_t)read6502(eahelp) | ((uint16_t)read6502(eahelp2) << 8);
+    pc += 2;
+}
+
+static void indx() { // (indirect,X)
+    uint16_t eahelp;
+    eahelp = (uint16_t)(((uint16_t)read6502(pc++) + (uint16_t)x) & 0xFF); //zero-page wraparound for table pointer
+    ea = (uint16_t)read6502(eahelp & 0x00FF) | ((uint16_t)read6502((eahelp+1) & 0x00FF) << 8);
+}
+
+static void indy() { // (indirect),Y
+    uint16_t eahelp, eahelp2, startpage;
+    eahelp = (uint16_t)read6502(pc++);
+    eahelp2 = (eahelp & 0xFF00) | ((eahelp + 1) & 0x00FF); //zero-page wraparound
+    ea = (uint16_t)read6502(eahelp) | ((uint16_t)read6502(eahelp2) << 8);
+    startpage = ea & 0xFF00;
+    ea += (uint16_t)y;
+
+    if (startpage != (ea & 0xFF00)) { //one cycle penlty for page-crossing on some opcodes
+        penaltyaddr = 1;
+    }
+}
+
+static uint16_t getvalue() {
+    if (pgm_read_word_near(addrtable + opcode) == acc) return((uint16_t)a);
+    else return((uint16_t)read6502(ea));
+}
+
+static uint16_t getvalue16() {
+    return((uint16_t)read6502(ea) | ((uint16_t)read6502(ea+1) << 8));
+}
+
+static void putvalue(uint16_t saveval) {
+    if (pgm_read_word_near(addrtable + opcode) == acc) a = (uint8_t)(saveval & 0x00FF);
+    else write6502(ea, (saveval & 0x00FF));
+}
+
+//instruction handler functions
+static void adc() {
+    penaltyop = 1;
+    value = getvalue();
+    result = (uint16_t)a + value + (uint16_t)(status & FLAG_CARRY);
+   
+    carrycalc(result);
+    zerocalc(result);
+    overflowcalc(result, a, value);
+    signcalc(result);
+    
+    #ifndef NES_CPU
+    if (status & FLAG_DECIMAL) {
+        clearcarry();
+        
+        if ((a & 0x0F) > 0x09) {
+            a += 0x06;
+        }
+        if ((a & 0xF0) > 0x90) {
+            a += 0x60;
+            setcarry();
+        }
+        
+        clockticks6502++;
+    }
+    #endif
+   
+    saveaccum(result);
+}
+
+static void _and() {
+    penaltyop = 1;
+    value = getvalue();
+    result = (uint16_t)a & value;
+   
+    zerocalc(result);
+    signcalc(result);
+   
+    saveaccum(result);
+}
+
+static void asl() {
+    value = getvalue();
+    result = value << 1;
+
+    carrycalc(result);
+    zerocalc(result);
+    signcalc(result);
+   
+    putvalue(result);
+}
+
+static void bcc() {
+    if ((status & FLAG_CARRY) == 0) {
+        oldpc = pc;
+        pc += reladdr;
+        if ((oldpc & 0xFF00) != (pc & 0xFF00)) clockticks6502 += 2; //check if jump crossed a page boundary
+            else clockticks6502++;
+    }
+}
+
+static void bcs() {
+    if ((status & FLAG_CARRY) == FLAG_CARRY) {
+        oldpc = pc;
+        pc += reladdr;
+        if ((oldpc & 0xFF00) != (pc & 0xFF00)) clockticks6502 += 2; //check if jump crossed a page boundary
+            else clockticks6502++;
+    }
+}
+
+static void beq() {
+    if ((status & FLAG_ZERO) == FLAG_ZERO) {
+        oldpc = pc;
+        pc += reladdr;
+        if ((oldpc & 0xFF00) != (pc & 0xFF00)) clockticks6502 += 2; //check if jump crossed a page boundary
+            else clockticks6502++;
+    }
+}
+
+static void _bit() {
+    value = getvalue();
+    result = (uint16_t)a & value;
+   
+    zerocalc(result);
+    status = (status & 0x3F) | (uint8_t)(value & 0xC0);
+}
+
+static void bmi() {
+    if ((status & FLAG_SIGN) == FLAG_SIGN) {
+        oldpc = pc;
+        pc += reladdr;
+        if ((oldpc & 0xFF00) != (pc & 0xFF00)) clockticks6502 += 2; //check if jump crossed a page boundary
+            else clockticks6502++;
+    }
+}
+
+static void bne() {
+    if ((status & FLAG_ZERO) == 0) {
+        oldpc = pc;
+        pc += reladdr;
+        if ((oldpc & 0xFF00) != (pc & 0xFF00)) clockticks6502 += 2; //check if jump crossed a page boundary
+            else clockticks6502++;
+    }
+}
+
+static void bpl() {
+    if ((status & FLAG_SIGN) == 0) {
+        oldpc = pc;
+        pc += reladdr;
+        if ((oldpc & 0xFF00) != (pc & 0xFF00)) clockticks6502 += 2; //check if jump crossed a page boundary
+            else clockticks6502++;
+    }
+}
+
+static void brk() {
+    pc++;
+    push16(pc); //push next instruction address onto stack
+    push8(status | FLAG_BREAK); //push CPU status to stack
+    setinterrupt(); //set interrupt flag
+    pc = (uint16_t)read6502(0xFFFE) | ((uint16_t)read6502(0xFFFF) << 8);
+}
+
+static void bvc() {
+    if ((status & FLAG_OVERFLOW) == 0) {
+        oldpc = pc;
+        pc += reladdr;
+        if ((oldpc & 0xFF00) != (pc & 0xFF00)) clockticks6502 += 2; //check if jump crossed a page boundary
+            else clockticks6502++;
+    }
+}
+
+static void bvs() {
+    if ((status & FLAG_OVERFLOW) == FLAG_OVERFLOW) {
+        oldpc = pc;
+        pc += reladdr;
+        if ((oldpc & 0xFF00) != (pc & 0xFF00)) clockticks6502 += 2; //check if jump crossed a page boundary
+            else clockticks6502++;
+    }
+}
+
+static void clc() {
+    clearcarry();
+}
+
+static void cld() {
+    cleardecimal();
+}
+
+static void _cli() {
+    clearinterrupt();
+}
+
+static void clv() {
+    clearoverflow();
+}
+
+static void cmp() {
+    penaltyop = 1;
+    value = getvalue();
+    result = (uint16_t)a - value;
+   
+    if (a >= (uint8_t)(value & 0x00FF)) setcarry();
+        else clearcarry();
+    if (a == (uint8_t)(value & 0x00FF)) setzero();
+        else clearzero();
+    signcalc(result);
+}
+
+static void cpx() {
+    value = getvalue();
+    result = (uint16_t)x - value;
+   
+    if (x >= (uint8_t)(value & 0x00FF)) setcarry();
+        else clearcarry();
+    if (x == (uint8_t)(value & 0x00FF)) setzero();
+        else clearzero();
+    signcalc(result);
+}
+
+static void cpy() {
+    value = getvalue();
+    result = (uint16_t)y - value;
+   
+    if (y >= (uint8_t)(value & 0x00FF)) setcarry();
+        else clearcarry();
+    if (y == (uint8_t)(value & 0x00FF)) setzero();
+        else clearzero();
+    signcalc(result);
+}
+
+static void dec() {
+    value = getvalue();
+    result = value - 1;
+   
+    zerocalc(result);
+    signcalc(result);
+   
+    putvalue(result);
+}
+
+static void dex() {
+    x--;
+   
+    zerocalc(x);
+    signcalc(x);
+}
+
+static void dey() {
+    y--;
+   
+    zerocalc(y);
+    signcalc(y);
+}
+
+static void eor() {
+    penaltyop = 1;
+    value = getvalue();
+    result = (uint16_t)a ^ value;
+   
+    zerocalc(result);
+    signcalc(result);
+   
+    saveaccum(result);
+}
+
+static void inc() {
+    value = getvalue();
+    result = value + 1;
+   
+    zerocalc(result);
+    signcalc(result);
+   
+    putvalue(result);
+}
+
+static void inx() {
+    x++;
+   
+    zerocalc(x);
+    signcalc(x);
+}
+
+static void iny() {
+    y++;
+   
+    zerocalc(y);
+    signcalc(y);
+}
+
+static void jmp() {
+    pc = ea;
+}
+
+static void jsr() {
+    push16(pc - 1);
+    pc = ea;
+}
+
+static void lda() {
+    penaltyop = 1;
+    value = getvalue();
+    a = (uint8_t)(value & 0x00FF);
+   
+    zerocalc(a);
+    signcalc(a);
+}
+
+static void ldx() {
+    penaltyop = 1;
+    value = getvalue();
+    x = (uint8_t)(value & 0x00FF);
+   
+    zerocalc(x);
+    signcalc(x);
+}
+
+static void ldy() {
+    penaltyop = 1;
+    value = getvalue();
+    y = (uint8_t)(value & 0x00FF);
+   
+    zerocalc(y);
+    signcalc(y);
+}
+
+static void lsr() {
+    value = getvalue();
+    result = value >> 1;
+   
+    if (value & 1) setcarry();
+        else clearcarry();
+    zerocalc(result);
+    signcalc(result);
+   
+    putvalue(result);
+}
+
+static void nop() {
+    switch (opcode) {
+        case 0x1C:
+        case 0x3C:
+        case 0x5C:
+        case 0x7C:
+        case 0xDC:
+        case 0xFC:
+            penaltyop = 1;
+            break;
+    }
+}
+
+static void ora() {
+    penaltyop = 1;
+    value = getvalue();
+    result = (uint16_t)a | value;
+   
+    zerocalc(result);
+    signcalc(result);
+   
+    saveaccum(result);
+}
+
+static void pha() {
+    push8(a);
+}
+
+static void php() {
+    push8(status | FLAG_BREAK);
+}
+
+static void pla() {
+    a = pull8();
+   
+    zerocalc(a);
+    signcalc(a);
+}
+
+static void plp() {
+    status = pull8() | FLAG_CONSTANT;
+}
+
+static void rol() {
+    value = getvalue();
+    result = (value << 1) | (status & FLAG_CARRY);
+   
+    carrycalc(result);
+    zerocalc(result);
+    signcalc(result);
+   
+    putvalue(result);
+}
+
+static void ror() {
+    value = getvalue();
+    result = (value >> 1) | ((status & FLAG_CARRY) << 7);
+   
+    if (value & 1) setcarry();
+        else clearcarry();
+    zerocalc(result);
+    signcalc(result);
+   
+    putvalue(result);
+}
+
+static void rti() {
+    status = pull8();
+    value = pull16();
+    pc = value;
+}
+
+static void rts() {
+    value = pull16();
+    pc = value + 1;
+}
+
+static void sbc() {
+    penaltyop = 1;
+    value = getvalue() ^ 0x00FF;
+    result = (uint16_t)a + value + (uint16_t)(status & FLAG_CARRY);
+   
+    carrycalc(result);
+    zerocalc(result);
+    overflowcalc(result, a, value);
+    signcalc(result);
+
+    #ifndef NES_CPU
+    if (status & FLAG_DECIMAL) {
+        clearcarry();
+        
+        a -= 0x66;
+        if ((a & 0x0F) > 0x09) {
+            a += 0x06;
+        }
+        if ((a & 0xF0) > 0x90) {
+            a += 0x60;
+            setcarry();
+        }
+        
+        clockticks6502++;
+    }
+    #endif
+   
+    saveaccum(result);
+}
+
+static void sec() {
+    setcarry();
+}
+
+static void sed() {
+    setdecimal();
+}
+
+static void _sei() {
+    setinterrupt();
+}
+
+static void sta() {
+    putvalue(a);
+}
+
+static void stx() {
+    putvalue(x);
+}
+
+static void sty() {
+    putvalue(y);
+}
+
+static void tax() {
+    x = a;
+   
+    zerocalc(x);
+    signcalc(x);
+}
+
+static void tay() {
+    y = a;
+   
+    zerocalc(y);
+    signcalc(y);
+}
+
+static void tsx() {
+    x = sp;
+   
+    zerocalc(x);
+    signcalc(x);
+}
+
+static void txa() {
+    a = x;
+   
+    zerocalc(a);
+    signcalc(a);
+}
+
+static void txs() {
+    sp = x;
+}
+
+static void tya() {
+    a = y;
+   
+    zerocalc(a);
+    signcalc(a);
+}
+
+//undocumented instructions
+#ifdef UNDOCUMENTED
+    static void lax() {
+        lda();
+        ldx();
+    }
+
+    static void sax() {
+        sta();
+        stx();
+        putvalue(a & x);
+        if (penaltyop && penaltyaddr) clockticks6502--;
+    }
+
+    static void dcp() {
+        dec();
+        cmp();
+        if (penaltyop && penaltyaddr) clockticks6502--;
+    }
+
+    static void isb() {
+        inc();
+        sbc();
+        if (penaltyop && penaltyaddr) clockticks6502--;
+    }
+
+    static void slo() {
+        asl();
+        ora();
+        if (penaltyop && penaltyaddr) clockticks6502--;
+    }
+
+    static void rla() {
+        rol();
+        _and();
+        if (penaltyop && penaltyaddr) clockticks6502--;
+    }
+
+    static void sre() {
+        lsr();
+        eor();
+        if (penaltyop && penaltyaddr) clockticks6502--;
+    }
+
+    static void rra() {
+        ror();
+        adc();
+        if (penaltyop && penaltyaddr) clockticks6502--;
+    }
+#else
+    #define lax nop
+    #define sax nop
+    #define dcp nop
+    #define isb nop
+    #define slo nop
+    #define rla nop
+    #define sre nop
+    #define rra nop
+#endif
+
+void nmi6502() {
+    push16(pc);
+    push8(status);
+    status |= FLAG_INTERRUPT;
+    pc = (uint16_t)read6502(0xFFFA) | ((uint16_t)read6502(0xFFFB) << 8);
+}
+
+void irq6502() {
+    push16(pc);
+    push8(status);
+    status |= FLAG_INTERRUPT;
+    pc = (uint16_t)read6502(0xFFFE) | ((uint16_t)read6502(0xFFFF) << 8);
+}
+
+void step6502() {
+    opcode = read6502(pc++);
+    status |= FLAG_CONSTANT;
+
+    penaltyop = 0;
+    penaltyaddr = 0;
+    
+    void (*adt)() = (void *)(pgm_read_word_near(addrtable + opcode));  //addrtable[opcode];    
+    void (*opt)() = (void *)(pgm_read_word_near(optable + opcode));    //optable[opcode];
+    (*adt)();
+    (*opt)();
+
+    clockticks6502 += pgm_read_byte_near(ticktable + opcode);//ticktable[opcode];
+    if (penaltyop && penaltyaddr) clockticks6502++;
+    clockgoal6502 = clockticks6502;
+
+    instructions++;
+}
+

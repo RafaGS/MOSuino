@@ -1,0 +1,33 @@
+#pragma once
+/**********************************************\
+ ==============================================
+
+           BOARD: AIM 65  (PENDIENTE)
+
+   Falta insertar el volcado real del monitor
+   en roms/aim65/aim65_monitor.h
+
+   Usa tools/bin2h.py para generarlo a partir
+   de tu .bin:
+
+     python3 tools/bin2h.py monitor.bin \
+         AIM65_MONITOR_ROM roms/aim65/aim65_monitor.h
+
+ ==============================================
+\**********************************************/
+#include <avr/pgmspace.h>
+#include <stdint.h>
+
+#define BOARD_NAME "AIM 65 (Rockwell)"
+
+// TODO: sustituir por el mapa de memoria real de AIM 65 (Rockwell) cuando se aporte el dump
+#define RAM_BASE   0x0000
+#define RAM_SIZE   1024
+#define RIOT_BASE  0x0000
+#define RIOT_SIZE  256
+
+// Placeholder: se sobreescribira al incluir el dump real
+static const uint8_t AIM65_MONITOR_ROM[1] PROGMEM = { 0xEA };
+#define MONITOR_ROM_BASE 0x8000
+#define MONITOR_ROM_SIZE 1
+#define MONITOR_ROM AIM65_MONITOR_ROM

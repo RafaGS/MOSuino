@@ -1,46 +1,88 @@
-# KIMuino
-Arduino based KIM-1 emulator
+# kimuino — emulador multi-placa 6502 (KIM-1 / SYM-1 / AIM 65 / Junior / System 1)
 
-# Memory layout
-    0x0000 - 0x16FF    5888 bytes RAM Arduino Mega (Uno & Nano: 1024 bytes)
-    0x1700 - 0x17FF     256 bytes RAM 6530 RIOT chips (I/O, Timers)
-    0x1800 - 0x1FFF    2048 bytes ROM 6530 RIOT chips (KIM operating system)
-    0x2000 - 0x28FF    2304 bytes ROM Tiny Basic by Tom Pittman
-    0x2900 - 0x38FF    4096 bytes EEPROM Arduino Mega (Uno & Nano: 1024 bytes)
-    0x4000 - 0x405F      95 bytes ROM Movit utility
-    0x4060 - 0x408A      43 bytes ROM Save utility
-    0x408B - 0x40B5      43 bytes ROM Load utility
-    0xFFFA - 0xFFFF       6 bytes ROM IRQ table
+Todas las placas se comunican **únicamente por Serial** (sin pantalla ni teclado
+físico), igual que el proyecto original.
 
-# MOVIT utility from the 1st book of KIM is used for this purpose
- - Enter original start adress of the program to move in $00D0 (LSB) and $00D1 (MSB),
- - Enter original end adress of the program to move in $00D2 (LSB) and $00D3 (MSB),
- - Enter new start adress of the program to move in $00D4 (LSB) and $00D5 (MSB),
- - Press 4000 [GO].
+## Estructura
 
-# SAVE 512 bytes $0200-$03FF from RAM to $2900-$2AFF EEPROM
- - Press 4060 [GO]
-This will init addresses $D0-$D5 and call MOVIT
+```
+kimuino.ino              sketch principal (setup/loop, variables globales)
+board_config.h           SELECTOR DE PLACA (ver mas abajo)
+fake6502.h                nucleo de CPU 6502, generico, igual para todas las placas
+memmap.h                  read6502()/write6502(), un bloque #if por placa
+boards/
+  board_kim1.h              mapa de memoria del KIM-1        (COMPLETO)
+  board_sym1.h               mapa de memoria del SYM-1         (PENDIENTE)
+  board_aim65.h               mapa de memoria del AIM 65         (PENDIENTE)
+  board_junior.h                Elektor Junior Computer            (PENDIENTE)
+  board_system1.h                Acorn System 1                      (PENDIENTE)
+roms/
+  kim1/                     ROMs y extensiones propias del KIM-1 (extraidas del .ino original)
+  sym1/, aim65/, junior/, system1/    (vacias: aqui van los dumps que generes con bin2h.py)
+tools/
+  bin2h.py                  convierte un .bin de una ROM monitor en un .h PROGMEM
+```
 
-# LOAD 512 bytes $2900-$2AFF EEPROM from EEPROM to $0200-$03FF RAM
- - Press 408B [GO]
-This will init addresses $D0-$D5 and call MOVIT
+## Compilar con arduino-cli
 
-# Run BASIC
- - Go to serial mode
- - Type in: 2000 [Space] (Cold start)
- - Type in: 2003 [Space] (Warm start, after LOAD/SAVE)
- - Type in: Shift + [G]
+Por defecto (sin pasar nada) se compila el **KIM-1**:
 
-# LOAD/SAVE BASIC user program
-    >A=USR(S)        // this will call SAVE at $4060
-    >A=USR(L)        // this will call LOAD at $408B
-    >A=(USR(16480))  // SAVE if you've overwritten variable S
-    >A=(USR(16523))  // LOAD if you've overwritten variable L
+```bash
+arduino-cli compile --fqbn arduino:avr:uno kimuino
+```
 
+Para elegir otra placa, sin tocar ningun fichero, se pasa el define por
+`--build-property`:
 
+```bash
+# SYM-1
+arduino-cli compile --fqbn arduino:avr:uno \
+  --build-property "compiler.cpp.extra_flags=-DBOARD_SYM1" \
+  kimuino
 
+# AIM 65
+arduino-cli compile --fqbn arduino:avr:uno \
+  --build-property "compiler.cpp.extra_flags=-DBOARD_AIM65" \
+  kimuino
 
+# Elektor Junior Computer
+arduino-cli compile --fqbn arduino:avr:uno \
+  --build-property "compiler.cpp.extra_flags=-DBOARD_JUNIOR" \
+  kimuino
 
+# Acorn System 1
+arduino-cli compile --fqbn arduino:avr:uno \
+  --build-property "compiler.cpp.extra_flags=-DBOARD_SYSTEM1" \
+  kimuino
+```
 
+(También puedes fijar la placa por defecto editando el `#define BOARD_KIM1` de
+`board_config.h`, si prefieres no pasar nada por línea de comandos.)
 
+## Añadir una placa nueva (paso a paso, con tu .bin ya en la mano)
+
+1. Genera el `.h` a partir del dump con `tools/bin2h.py`:
+
+   ```bash
+   python3 tools/bin2h.py supermon.bin SYM1_MONITOR_ROM roms/sym1/sym1_monitor.h --base 0x8000
+   ```
+
+   (el `--base` es la dirección donde arranca esa ROM en el mapa de memoria
+   real de la máquina — ese dato sí lo necesito yo para ajustarlo bien).
+
+2. En `boards/board_sym1.h`, sustituye el placeholder por el include real y
+   ajusta `RAM_SIZE`, `RIOT_BASE`/`RIOT_SIZE` (o lo que corresponda) al mapa
+   de memoria real de la placa.
+
+3. En `memmap.h`, rellena el bloque `#elif defined(BOARD_SYM1)` de
+   `read6502()`/`write6502()` con las direcciones de E/S por Serial
+   (equivalentes a las intercepciones OUTCH/GETCH del KIM-1).
+
+Repetimos este mismo proceso, uno por placa, empezando por el SYM-1.
+
+## Nota de compatibilidad
+
+`fake6502.h` incluye ahora los prototipos de las funciones de direccionamiento
+y de opcodes. Esto es necesario para compilar fuera del IDE de Arduino (que
+normalmente los genera solo automáticamente); con `arduino-cli`/el IDE sigue
+funcionando exactamente igual que antes.
