@@ -1,12 +1,17 @@
 /**********************************************\
  ==============================================
 
-             ARDUINO 6502 SBC EMULATOR
+           ARDUINO MOS 6502 SBC EMULATOR
+                  -- MOSuino --
         (KIM-1 / SYM-1 / AIM 65 / Junior /
                 Acorn System 1)
 
                        by
-                Code Monkey King
+                      RafaG
+              minibots.wordpress.com
+
+                      
+        based on Code Monkey King's code 
 
    Todas las placas se comunican unicamente por
    Serial (sin pantalla ni teclado fisico).
@@ -16,7 +21,7 @@
 
  ==============================================
 \**********************************************/
-
+//#define DEBUG_TRACE
 #include <stdio.h>
 #include <stdint.h>
 #include <avr/pgmspace.h>
@@ -49,6 +54,10 @@ void setup()
 {
     // arranque de la comunicacion serie (unica via de E/S en todas las placas)
     Serial.begin(9600);
+    Serial.println("BOOTING " MOSBOARD);
+
+    // Pausa de 1 segundo
+    delay(1000);
 
     // reset de la CPU (lee el vector de RESET ya sea de ROM o de RIOT segun la placa)
     reset6502();
@@ -82,5 +91,13 @@ void setup()
 
 void loop()
 {
+#ifdef DEBUG_TRACE
+    static uint16_t n = 0;
+    if (n < 2000) {
+        extern uint16_t pc;
+        Serial.print(F("pc=")); Serial.println(pc, HEX);
+        n++;
+    }
+#endif
     step6502();
 }

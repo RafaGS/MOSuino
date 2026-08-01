@@ -20,7 +20,7 @@
 
  ==============================================
 \**********************************************/
-#define BOARD_SYM1
+//#define BOARD_SYM1
 // Si NINGUNO de los defines de placa llega ya puesto por arduino-cli
 // (-DBOARD_XXX), se usa KIM-1 como placa por defecto.
 #if !defined(BOARD_KIM1)  && !defined(BOARD_SYM1)    && \
@@ -37,12 +37,17 @@
 
 #if defined(BOARD_KIM1)
     #include "boards/board_kim1.h"
+    #define MOSBOARD "MOS KIM-1"
 #elif defined(BOARD_SYM1)
     #include "boards/board_sym1.h"
+    #define MOSBOARD "SYNERTEK SYM-1"
 #elif defined(BOARD_AIM65)
     #include "boards/board_aim65.h"
+    #define MOSBOARD "ROCKWELL AIM 65"
 #elif defined(BOARD_JUNIOR)
     #include "boards/board_junior.h"
+    #define MOSBOARD "Elektor Junior Computer"
 #elif defined(BOARD_SYSTEM1)
     #include "boards/board_system1.h"
+    #define MOSBOARD "Acorn Microcomputer (Acorn System 1)"
 #endif

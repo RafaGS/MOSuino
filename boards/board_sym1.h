@@ -51,14 +51,16 @@
 #define SYM1_RESET_PC 0x8000
 
 // Puntos de intercepcion para E/S por Serial (confirmados por disassembly
-// del dump real symon1_1.bin):
-//   GETCH vectorizado: $8A1B llama a $8A41 = "JMP ($A661)" -> interceptamos
-//   justo antes de esa instruccion; el "retorno" (como si hubiera hecho RTS)
-//   es $8A21, la instruccion siguiente al JSR que la llamo.
+// del dump real symon1_1.bin). El retorno real NO se fija a mano: en
+// memmap.h se hace un pull16()+1 (el mismo calculo que un RTS) para
+// desapilar correctamente la direccion que el JSR que nos trajo aqui ya
+// dejo en la pila. Estas direcciones _RET se dejan solo como referencia
+// documental (deberian coincidir con lo que pull16()+1 calcula).
+//   GETCH vectorizado: $8A1B llama a $8A41 = "JMP ($A661)"
 #define SYM1_ADDR_GETCH     0x8A41
-#define SYM1_ADDR_GETCH_RET 0x8A21
+#define SYM1_ADDR_GETCH_RET 0x8A21   // (informativo) = pull16()+1 esperado
 
 //   OUTCH vectorizado: $8A47 llama a $8A55 = "JMP ($A664)" (con el caracter
-//   a imprimir ya en A) -> interceptamos justo antes; retorno en $8A52.
+//   a imprimir ya en A)
 #define SYM1_ADDR_OUTCH     0x8A55
-#define SYM1_ADDR_OUTCH_RET 0x8A52
+#define SYM1_ADDR_OUTCH_RET 0x8A52   // (informativo) = pull16()+1 esperado

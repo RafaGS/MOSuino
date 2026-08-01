@@ -38,6 +38,19 @@ cargan con trucos de RAM protegida). La entrada/salida por Serial se
 intercepta en los puntos de "vectored I/O" reales del monitor (`$8A41` para
 GETCH, `$8A55` para OUTCH), localizados por disassembly del propio dump.
 
+Al arrancar (o pulsar reset) deberías ver directamente `\r\n.` — el prompt
+de Supermon 1.1. **No hay mensaje de bienvenida**: en el hardware real
+tampoco lo hay, este monitor es minimalista (a diferencia del KIM-1, que sí
+imprime "KIM" al arrancar).
+
+Cuando tecleas algo y no ves nada: el ROM real cuenta con que el teletipo
+(ASR-33) hace "eco local" mecánico de lo que escribes — por eso, tras leer
+un dígito, el propio monitor solo manda explícitamente un espacio fijo, no
+el carácter en sí. Un terminal serie moderno no hace ese eco local, así que
+lo añadimos nosotros dentro del intercepto de GETCH (igual que hacía ya el
+KIM-1). Deberías ver, por ejemplo, al escribir `5` + Enter: `.5 ` seguido
+de salto de línea.
+
 La RAM de usuario por defecto es de 1KB (`0000-03FF`), la configuración
 "de fábrica" real del SYM-1 — apto para Arduino Uno/Nano. Si usas un Mega
 (más SRAM), puedes subir `RAM_SIZE` en `boards/board_sym1.h` hasta 4096
@@ -128,3 +141,13 @@ Ambas placas (KIM-1 y SYM-1) se han comprobado con una compilación de
 sintaxis real usando `avr-g++` (no solo revisión visual), con stubs mínimos
 de `Serial`/`EEPROM`. Compilan sin errores nuevos respecto al `.ino`
 original (solo avisos preexistentes propios del estilo de `fake6502.c`).
+
+---
+
+## Créditos
+
+#### ARDUINO MOS 6502 SBC EMULATOR (MOSuino)
+
+- Developed by RafaG
+
+- Based on Code Monkey King's code

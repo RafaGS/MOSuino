@@ -107,20 +107,30 @@ uint8_t read6502(uint16_t address) {
 
 #elif defined(BOARD_SYM1)
     // ---- SYM-1 (Supermon 1.1) ---------------------------------------------
-    // GETCH vectorizado: char en A, A=0 si no hay nada (sondeo no bloqueante
-    // en el hardware real; aqui simplemente esperamos a que llegue el byte).
+    // Interceptamos DESPUES de que el JSR que nos trajo aqui ya empujo su
+    // direccion de retorno a la pila real del 6502 emulado. Por eso NO
+    // podemos fijar pc a mano (dejariamos esa direccion sin desapilar, y
+    // un RTS posterior la recogeria y saltaria a cualquier sitio). En vez
+    // de eso, hacemos nosotros mismos el equivalente exacto de un RTS:
+    // desapilar 16 bits y sumar 1 (mismo calculo que usa rts() en fake6502.h).
     if (address == SYM1_ADDR_GETCH) {
-        extern uint8_t a; extern uint16_t pc;
+        extern uint8_t a; extern uint16_t pc; extern uint16_t pull16();
+        // El monitor real cuenta con que el teletipo (ASR-33) hace "eco
+        // local" mecanico de lo que se teclea (por eso el ROM, tras leer
+        // un digito, solo imprime explicitamente un espacio fijo via
+        // $8342, nunca el caracter en si). Un terminal serie moderno no
+        // hace ese eco local, asi que lo compensamos aqui.
         while (Serial.available() == 0) { /* esperar byte */ }
         a = Serial.read();
-        pc = SYM1_ADDR_GETCH_RET;
+        Serial.print((char)a);
+        pc = pull16() + 1;
         return (0xEA);
     }
     // OUTCH vectorizado: caracter a imprimir ya esta en A
     if (address == SYM1_ADDR_OUTCH) {
-        extern uint8_t a; extern uint16_t pc;
+        extern uint8_t a; extern uint16_t pc; extern uint16_t pull16();
         Serial.print((char)a);
-        pc = SYM1_ADDR_OUTCH_RET;
+        pc = pull16() + 1;
         return (0xEA);
     }
 
