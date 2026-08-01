@@ -7,7 +7,7 @@ físico), igual que el proyecto original.
 
 - [MOS KIM-1](https://minibots.wordpress.com/2026/06/10/emulador-de-mos-kim-1-con-arduino-uno-r3/)
 
-- [Synertek SYM-1]()
+- [Synertek SYM-1](https://minibots.wordpress.com/2026/08/01/emulador-de-synertek-sym-1-con-arduino-uno-r3/)
 
 ## Estructura
 
