@@ -1,4 +1,4 @@
-# MOSuino — emulador multi-placa 6502 (KIM-1 / SYM-1 / AIM 65 / Junior / System 1)
+# MOSuino — emulador multi-placa 6502 (KIM-1 / SYM-1 / AIM 65)
 
 Todas las placas se comunican **únicamente por Serial** (sin pantalla ni teclado
 físico), igual que el proyecto original.
@@ -51,7 +51,7 @@ arduino-cli compile --fqbn arduino:avr:uno \
 arduino-cli compile --fqbn arduino:avr:uno \
   --build-property "compiler.cpp.extra_flags=-DBOARD_AIM65" \
   MOSuino
-  
+
 # AIM 65
 arduino-cli compile --fqbn arduino:avr:uno \
   --build-property "compiler.cpp.extra_flags=-DBOARD_AIM65" \
@@ -66,7 +66,7 @@ arduino-cli compile --fqbn arduino:avr:uno \
 
 ## Validación realizada
 
-Ambas placas (KIM-1 y SYM-1) se han comprobado con una compilación de sintaxis real usando `avr-g++` (no solo revisión visual), con stubs mínimos de `Serial`/`EEPROM`. Compilan sin errores nuevos respecto al `.ino` original (solo avisos preexistentes propios del estilo de `fake6502.c`).
+Las placas (KIM-1, SYM-1 y AIM-65) se han comprobado con una compilación de sintaxis real usando `avr-g++` (no solo revisión visual), con stubs mínimos de `Serial`/`EEPROM`. Compilan sin errores nuevos respecto al `.ino` original (solo avisos preexistentes propios del estilo de `fake6502.c`).
 
 ---
 
