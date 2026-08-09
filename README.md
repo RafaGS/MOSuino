@@ -9,6 +9,8 @@ físico), igual que el proyecto original.
 
 - [Synertek SYM-1](https://minibots.wordpress.com/2026/08/01/emulador-de-synertek-sym-1-con-arduino-uno-r3/)
 
+- [Rockwell AIM-65](https://minibots.wordpress.com/2026/08/09/emulador-de-rockwell-aim-65-con-arduino-mega-2560/)
+
 ## Estructura
 
 ```
@@ -17,15 +19,13 @@ board_config.h           SELECTOR DE PLACA (ver mas abajo)
 fake6502.h                nucleo de CPU 6502, generico, igual para todas las placas
 memmap.h                  read6502()/write6502(), un bloque #if por placa
 boards/
-  board_kim1.h              mapa de memoria del KIM-1        (COMPLETO)
-  board_sym1.h               mapa de memoria del SYM-1         (COMPLETO — Supermon 1.1)
-  board_aim65.h               mapa de memoria del AIM 65         (PENDIENTE)
-  board_junior.h                Elektor Junior Computer            (PENDIENTE)
-  board_system1.h                Acorn System 1                      (PENDIENTE)
+  board_kim1.h              mapa de memoria del KIM-1 
+  board_sym1.h               mapa de memoria del SYM-1        
+  board_aim65.h               mapa de memoria del AIM 65       
 roms/
   kim1/                     ROMs y extensiones propias del KIM-1 (extraidas del .ino original)
-  sym1/                      ROM real de Supermon 1.1 (symon1_1.bin ya integrado)
-  aim65/, junior/, system1/    (vacias: aqui van los dumps que generes con bin2h.py)
+  sym1/                     ROM de Supermon 1.1 (symon1_1.bin ya integrado)
+  aim65/                    ROMs de AIM-65
 tools/
   bin2h.py                  convierte un .bin de una ROM monitor en un .h PROGMEM
 ```
@@ -51,16 +51,11 @@ arduino-cli compile --fqbn arduino:avr:uno \
 arduino-cli compile --fqbn arduino:avr:uno \
   --build-property "compiler.cpp.extra_flags=-DBOARD_AIM65" \
   MOSuino
-
-# Elektor Junior Computer
+  
+# AIM 65
 arduino-cli compile --fqbn arduino:avr:uno \
-  --build-property "compiler.cpp.extra_flags=-DBOARD_JUNIOR" \
-  MOSuino
-
-# Acorn System 1
-arduino-cli compile --fqbn arduino:avr:uno \
-  --build-property "compiler.cpp.extra_flags=-DBOARD_SYSTEM1" \
-  MOSuino
+  --build-property "compiler.cpp.extra_flags=-DBOARD_AIM65" \
+  MOSuino  
 ```
 
 (También se puede fijar la placa por defecto editando el `#define BOARD_KIM1` de `board_config.h`).

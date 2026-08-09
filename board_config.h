@@ -20,19 +20,17 @@
 
  ==============================================
 \**********************************************/
-//#define BOARD_SYM1
+#define BOARD_AIM65
 // Si NINGUNO de los defines de placa llega ya puesto por arduino-cli
 // (-DBOARD_XXX), se usa KIM-1 como placa por defecto.
 #if !defined(BOARD_KIM1)  && !defined(BOARD_SYM1)    && \
-    !defined(BOARD_AIM65) && !defined(BOARD_JUNIOR)  && \
-    !defined(BOARD_SYSTEM1)
+    !defined(BOARD_AIM65)
     #define BOARD_KIM1
 #endif
 
 // Comprobacion de que solo hay UNA placa seleccionada
-#if (defined(BOARD_KIM1)  + defined(BOARD_SYM1) + defined(BOARD_AIM65) + \
-     defined(BOARD_JUNIOR) + defined(BOARD_SYSTEM1)) > 1
-    #error "Solo se puede definir UNA placa a la vez (BOARD_KIM1 / BOARD_SYM1 / BOARD_AIM65 / BOARD_JUNIOR / BOARD_SYSTEM1)"
+#if (defined(BOARD_KIM1)  + defined(BOARD_SYM1) + defined(BOARD_AIM65)) > 1
+    #error "Solo se puede definir UNA placa a la vez (BOARD_KIM1 / BOARD_SYM1 / BOARD_AIM65)"
 #endif
 
 #if defined(BOARD_KIM1)
@@ -44,10 +42,4 @@
 #elif defined(BOARD_AIM65)
     #include "boards/board_aim65.h"
     #define MOSBOARD "ROCKWELL AIM 65"
-#elif defined(BOARD_JUNIOR)
-    #include "boards/board_junior.h"
-    #define MOSBOARD "Elektor Junior Computer"
-#elif defined(BOARD_SYSTEM1)
-    #include "boards/board_system1.h"
-    #define MOSBOARD "Acorn Microcomputer (Acorn System 1)"
 #endif

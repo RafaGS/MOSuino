@@ -18,6 +18,9 @@ uint8_t RAM[RAM_SIZE];
 #if defined(RIOT_SIZE)
 uint8_t RIOT[RIOT_SIZE];
 #endif
+#if defined(BOARD_AIM65)
+uint8_t SCRATCH[AIM65_SCRATCH_SIZE];
+#endif
 
 // char_pending / serial_mode se usan en el KIM-1 para emular el teclado
 // hexadecimal via Serial (siempre "sin teclado fisico", solo por Serial)
@@ -26,6 +29,11 @@ extern uint8_t serial_mode;
 
 // ---------------------------------------------------------------------------
 uint8_t read6502(uint16_t address) {
+#if defined(BOARD_AIM65)
+    // Contador de lecturas de $A800, para fingir la autodeteccion de
+    // velocidad al arranque (ver bloque BOARD_AIM65 mas abajo).
+    static uint16_t aim65_a800_reads = 0;
+#endif
 
 #if defined(BOARD_KIM1)
     // ---- KIM-1 ------------------------------------------------------------
@@ -104,8 +112,9 @@ uint8_t read6502(uint16_t address) {
     if (address < 0x0400) return RAM[address];
 
     return 0;
+#endif
 
-#elif defined(BOARD_SYM1)
+#if defined(BOARD_SYM1)
     // ---- SYM-1 (Supermon 1.1) ---------------------------------------------
     // Interceptamos DESPUES de que el JSR que nos trajo aqui ya empujo su
     // direccion de retorno a la pila real del 6502 emulado. Por eso NO
@@ -148,19 +157,78 @@ uint8_t read6502(uint16_t address) {
     if (address < RAM_SIZE) return RAM[address];
 
     return 0;
+#endif
 
-#elif defined(BOARD_AIM65)
-    #warning "BOARD_AIM65: mapa de memoria pendiente de implementar"
-    return 0;
+#if defined(BOARD_AIM65)
+    // ---- AIM 65 -------------------------------------------------------
+    // GETCH real (autocontenida, segura de interceptar en su entrada)
+    if (address == AIM65_ADDR_GETCH) {
+        extern uint8_t a; extern uint16_t pc; extern uint16_t pull16();
+        while (Serial.available() == 0) { /* esperar byte */ }
+        a = Serial.read();
+        pc = pull16() + 1;
+        return (0xEA);
+    }
+    // OUTCH: tap no intrusivo en $EEAC (ver nota extensa en board_aim65.h
+    // sobre por que el intercept anterior en $EBB6 imprimia basura). Solo
+    // efecto lateral: NO tocamos pc, dejamos que la instruccion real (STA
+    // $A427) se ejecute con total normalidad -- por eso NO hacemos return
+    // aqui, cae al lookup normal de MONITOR_E000 unas lineas mas abajo.
+    if (address == AIM65_ADDR_OUTCH_TAP) {
+        extern uint8_t a;
+        Serial.print((char)(a & 0x7F));
+    }
 
-#elif defined(BOARD_JUNIOR)
-    #warning "BOARD_JUNIOR: mapa de memoria pendiente de implementar"
-    return 0;
+    // Vector VIA fingido: Timer1 "siempre expirado" para no bloquear
+    // esperas de temporizacion que no emulamos.
+    if (address == 0xA80D) return 0x20;
+    // $A800: fingimos "modo serie, autobaud instantaneo" (bit3=0 en la
+    // primera lectura -> evita rama teclado; bit6=1 en las siguientes ->
+    // saca de la espera de autodeteccion).
+    if (address == 0xA800) {
+        aim65_a800_reads++;
+        return (aim65_a800_reads == 1) ? 0x00 : 0x40;
+    }
+    // $A482: flag de "temporizador de impresora/display listo". En
+    // hardware real lo actualiza una ISR periodica disparada por el
+    // Timer2 del VIA de impresora/display (un PIA/VIA separado del que
+    // gestiona el TTY en $A800); como no emulamos interrupciones reales,
+    // sin esto BASIC se queda esperando aqui para siempre en cuanto hace
+    // el primer PRINT (confirmado: rutina de espera en $ECEF-$ECFB,
+    // usada por BASIC para temporizar la salida hacia el display/
+    // impresora fisicos). Fingimos que el temporizador esta siempre
+    // listo, igual que con $A80D.
+    if (address == 0xA482) return 0xFF;
 
-#elif defined(BOARD_SYSTEM1)
-    #warning "BOARD_SYSTEM1: mapa de memoria pendiente de implementar"
+    // BASIC ROM 1 ($B000-$BFFF, bytes de R3226-11.BIN -- ver nota en
+    // board_aim65.h sobre el intercambio de chips B000/C000).
+    if (address >= BASIC1_BASE &&
+            address <= (BASIC1_BASE + BASIC1_SIZE - 1))
+        return pgm_read_byte_near(BASIC1_ROM + (address - BASIC1_BASE));
+
+    // BASIC ROM 2 ($C000-$CFFF, bytes de R3225-11.BIN).
+    if (address >= BASIC2_BASE &&
+            address <= (BASIC2_BASE + BASIC2_SIZE - 1))
+        return pgm_read_byte_near(BASIC2_ROM + (address - BASIC2_BASE));
+
+    // ROM Assembler ($D000-$DFFF).
+    if (address >= ASSEMBLER_BASE &&
+            address <= (ASSEMBLER_BASE + ASSEMBLER_SIZE - 1))
+        return pgm_read_byte_near(ASSEMBLER_ROM + (address - ASSEMBLER_BASE));
+
+    if (address >= MONITOR_E000_BASE && address <= (MONITOR_E000_BASE + MONITOR_E000_SIZE - 1))
+        return pgm_read_byte_near(MONITOR_E000 + (address - MONITOR_E000_BASE));
+    if (address >= MONITOR_F000_BASE && address <= (MONITOR_F000_BASE + MONITOR_F000_SIZE - 1))
+        return pgm_read_byte_near(MONITOR_F000 + (address - MONITOR_F000_BASE));
+
+    if (address >= AIM65_SCRATCH_BASE && address <= (AIM65_SCRATCH_BASE + AIM65_SCRATCH_SIZE - 1))
+        return SCRATCH[address - AIM65_SCRATCH_BASE];
+
+    if (address < RAM_SIZE) return RAM[address];
+
     return 0;
 #endif
+
 }
 
 // ---------------------------------------------------------------------------
@@ -187,12 +255,12 @@ void write6502(uint16_t address, uint8_t value) {
     return;
 
 #elif defined(BOARD_AIM65)
-    return; // TODO
-
-#elif defined(BOARD_JUNIOR)
-    return; // TODO
-
-#elif defined(BOARD_SYSTEM1)
-    return; // TODO
+    if (address == 0xA800 || address == 0xA80D) return;  // registros VIA fingidos
+    if (address >= AIM65_SCRATCH_BASE && address <= (AIM65_SCRATCH_BASE + AIM65_SCRATCH_SIZE - 1)) {
+        SCRATCH[address - AIM65_SCRATCH_BASE] = value;
+        return;
+    }
+    if (address < RAM_SIZE) { RAM[address] = value; return; }
+    return;
 #endif
 }

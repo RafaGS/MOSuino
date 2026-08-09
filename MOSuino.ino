@@ -3,8 +3,7 @@
 
            ARDUINO MOS 6502 SBC EMULATOR
                   -- MOSuino --
-        (KIM-1 / SYM-1 / AIM 65 / Junior /
-                Acorn System 1)
+             (KIM-1 / SYM-1 / AIM 65)
 
                        by
                       RafaG
@@ -81,11 +80,8 @@ void setup()
     // emuladores existentes.
     pc = SYM1_RESET_PC;
 #elif defined(BOARD_AIM65)
-    // TODO: inicializacion especifica del AIM 65
-#elif defined(BOARD_JUNIOR)
-    // TODO: inicializacion especifica del Elektor Junior Computer
-#elif defined(BOARD_SYSTEM1)
-    // TODO: inicializacion especifica del Acorn System 1
+    // Vector de RESET real del propio ROM.
+    pc = AIM65_RESET_PC;
 #endif
 }
 
